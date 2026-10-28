@@ -13,6 +13,9 @@
 #include "freertos/semphr.h"
 
 // PINS
+const int TRIG_PIN = 18;
+const int ECHO_PIN = 5;
+const int LIGHT_DO_PIN = 19;
 const int BUTTON_PIN = 26;
 const int I2C_SDA_PIN = 27;
 const int I2C_SCL_PIN = 33;
@@ -24,6 +27,13 @@ const UBaseType_t AHT_PRIORITY = 1;
 const uint32_t BUTTON_STACK_BYTES = 3072;
 const UBaseType_t BUTTON_PRIORITY = 2;              // above sensor tasks
 const uint32_t BUTTON_DEBOUNCE_MS = 50;
+const uint32_t MOTION_STACK_BYTES = 4096;
+const UBaseType_t MOTION_PRIORITY = 1;
+const uint32_t MOTION_POLL_MS = 150;
+const int MOTION_CONFIRM = 3;
+const uint32_t MOTION_COOLDOWN_MS = 10000;
+const float DETECTION_IN = 24.0;
+const int DARK_SIGNAL = HIGH;
 const BaseType_t SENSOR_CORE = 1;                   // WiFi stack lives on core 0
 
 // MQTT EVENT QUEUE
@@ -59,6 +69,18 @@ void IRAM_ATTR buttonISR() {
   if(woken) portYIELD_FROM_ISR();
 }
 
+float measureDistanceInches() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return -1.0;
+  return duration * 0.0133 / 2.0;
+}
+
 /**
  * @brief Checks for a button press and publishes event. Only publishes on first contact
  * 
@@ -78,6 +100,39 @@ void buttonTask(void *pvParameters) {
       vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));
     }
     ulTaskNotifyTake(pdTRUE, 0);
+  }
+}
+
+/**
+ * @brief sChecks if it is DARK and if there is motion and fires event if true
+ * 
+ * @param *pvParameters Thread parameters initialized when creating task
+ */
+void motionTask(void *pvParameters) {
+  TickType_t lastWake = xTaskGetTickCount();
+  TickType_t lastEvent = 0;
+  bool everFired = false;
+  int confirmed = 0;
+
+  for(;;) {
+    float dist = measureDistanceInches();
+    bool detected = (dist > 0 && dist <= DETECTION_IN);
+    bool dark = (digitalRead(LIGHT_DO_PIN) == DARK_SIGNAL);
+
+    confirmed = (detected && dark) ? confirmed + 1 : 0;
+
+    bool cooled = !everFired || 
+      (xTaskGetTickCount() - lastEvent) >= pdMS_TO_TICKS(MOTION_COOLDOWN_MS);
+
+    if(confirmed >= MOTION_CONFIRM && cooled) {
+      bool ok = publishEvent("event/house1/primetime1/motion", "detected");
+      Serial.printf("Night motion at %.1f in (%s)\n", dist, ok ? "queued" : "DROPPED");
+      lastEvent = xTaskGetTickCount();
+      everFired = true;
+      confirmed = 0;
+    }
+
+    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(MOTION_POLL_MS));
   }
 }
 
@@ -113,22 +168,29 @@ void setup()
   delay(1000);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-  // Temperature/Humidity Thread
-  if(!aht.begin()) {
-    Serial.println("AHT10 not found, check wiring");
-    while (true) vTaskDelay(portMAX_DELAY);
-  }
-
   mqttQueue = xQueueCreate(10, sizeof(MqttMessage));
-
-  xTaskCreatePinnedToCore(tempHumidityTask, "aht10", AHT_STACK_BYTES,
-                          NULL, AHT_PRIORITY, NULL, SENSOR_CORE);
 
   // Button Thread
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   xTaskCreatePinnedToCore(buttonTask, "button", BUTTON_STACK_BYTES,
                           NULL, BUTTON_PRIORITY, &buttonTaskHandle, SENSOR_CORE);
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
+
+  // Motion Thread
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LIGHT_DO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
+  xTaskCreatePinnedToCore(motionTask, "motion", MOTION_STACK_BYTES,
+                          NULL, MOTION_PRIORITY, NULL, SENSOR_CORE);
+
+  // Temperature/Humidity Thread
+  if(!aht.begin()) {
+    Serial.println("AHT10 not found, check wiring. Temp/humidity disabled.");
+  } else {
+    xTaskCreatePinnedToCore(tempHumidityTask, "aht10", AHT_STACK_BYTES,
+                            NULL, AHT_PRIORITY, NULL, SENSOR_CORE);
+  }
 }
 
 void loop() {
