@@ -1,0 +1,6 @@
+# Credentials (file or folder)
+esp32-sensor/esp32-sensor-secrets.h
+*secrets*
+
+# Build output
+build/

@@ -3,9 +3,12 @@
   Board: ESP32-WROOM-DA
 */
 
-#include <Arduino.h>
-#include <Wire.h>
 #include <Adafruit_AHTX0.h>
+#include <Arduino.h>
+#include <PubSubClient.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include "esp32-sensor-secrets.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,12 +16,13 @@
 #include "freertos/semphr.h"
 
 // PINS
-const int TRIG_PIN = 18;
-const int ECHO_PIN = 5;
+const int TRIG_PIN = 5;
+const int ECHO_PIN = 18;
 const int LIGHT_DO_PIN = 19;
 const int BUTTON_PIN = 26;
 const int I2C_SDA_PIN = 27;
 const int I2C_SCL_PIN = 33;
+const int WIFI_LED_PIN = 2;                         // onboard LED, on while WiFi is connected
 
 // RTOS CONFIG
 const uint32_t AHT_POLL_MS = 10000;
@@ -35,6 +39,15 @@ const uint32_t MOTION_COOLDOWN_MS = 10000;
 const float DETECTION_IN = 24.0;
 const int DARK_SIGNAL = HIGH;
 const BaseType_t SENSOR_CORE = 1;                   // WiFi stack lives on core 0
+const uint32_t NET_STACK_BYTES = 8192;
+const UBaseType_t NET_PRIORITY = 1;
+const BaseType_t NET_CORE = 0;
+const uint32_t NET_RETRY_MS = 5000;
+const uint32_t NET_QUEUE_WAIT_MS = 100;
+const char *STATUS_TOPIC = "status/house1/primetime1";
+
+WiFiClient wifiClient;
+PubSubClient mqtt(wifiClient);
 
 // MQTT EVENT QUEUE
 struct MqttMessage {
@@ -124,6 +137,8 @@ void motionTask(void *pvParameters) {
     bool cooled = !everFired || 
       (xTaskGetTickCount() - lastEvent) >= pdMS_TO_TICKS(MOTION_COOLDOWN_MS);
 
+    // DEBUGGING LOG Serial.printf("MOTION: (%f) | DETECT: (%d) | DARK: (%d) | COOLED: (%d)\n", dist, detected, dark, cooled);
+
     if(confirmed >= MOTION_CONFIRM && cooled) {
       bool ok = publishEvent("event/house1/primetime1/motion", "detected");
       Serial.printf("Night motion at %.1f in (%s)\n", dist, ok ? "queued" : "DROPPED");
@@ -150,7 +165,8 @@ void tempHumidityTask(void *pvParameters) {
 
     if(!isnan(temp.temperature) && !isnan(humidity.relative_humidity)) {
         float tempF = temp.temperature * 9.0 / 5.0 + 32.0;
-        bool okT = publishValue("sensor/house1/primetime1/temperature", tempF);
+        //bool okT = publishValue("sensor/house1/primetime1/temperature", tempF);
+        bool okT = publishValue("sensors/temperature", tempF);
         bool okH = publishValue("sensor/house1/primetime1/humidity",
                                 humidity.relative_humidity);
         Serial.printf("Temp: %.1f F (%s) | Humidity: %.1f %% (%s)\n",
@@ -162,6 +178,57 @@ void tempHumidityTask(void *pvParameters) {
   }
 }
 
+void networkTask(void *pvParameters) {
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+
+  // TEMP: log the ESP32's MAC address, remove once no longer needed
+  Serial.printf("[TEMP] ESP32 MAC: %s\n", WiFi.macAddress().c_str());
+
+  for(;;) {
+    // WiFi
+    digitalWrite(WIFI_LED_PIN, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
+    if(WiFi.status() != WL_CONNECTED) {
+      Serial.printf("WiFi connecting to %s...\n", WIFI_SSID);
+      WiFi.begin(WIFI_SSID);
+      uint32_t start = millis();
+      while(WiFi.status() != WL_CONNECTED && millis() - start < 15000)
+        vTaskDelay(pdMS_TO_TICKS(250));
+      digitalWrite(WIFI_LED_PIN, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
+      if(WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi failed, retrying");
+        vTaskDelay(pdMS_TO_TICKS(NET_RETRY_MS));
+        continue;
+      }
+      Serial.printf("WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());
+    }
+
+    // MQTT
+    if(!mqtt.connected()) {
+      Serial.println("MQTT connecting...");
+      if(mqtt.connect(MQTT_CLIENTID, STATUS_TOPIC, 1, true, "offline")) {
+        mqtt.publish(STATUS_TOPIC, "online", true);
+        Serial.println("MQTT connected");
+      } else {
+        Serial.printf("MQTT failed, rc=%d\n", mqtt.state());
+        vTaskDelay(pdMS_TO_TICKS(NET_RETRY_MS));
+        continue;
+      }
+    }
+
+    // Drain the queue
+    MqttMessage msg;
+    while(xQueueReceive(mqttQueue, &msg, pdMS_TO_TICKS(NET_QUEUE_WAIT_MS)) == pdTRUE) {
+      if(!mqtt.publish(msg.topic, msg.payload))
+        Serial.printf("Publish failed: %s\n", msg.topic);
+    }
+    mqtt.loop();
+
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -169,6 +236,12 @@ void setup()
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
   mqttQueue = xQueueCreate(10, sizeof(MqttMessage));
+
+  // WiFi Thread
+  pinMode(WIFI_LED_PIN, OUTPUT);
+  digitalWrite(WIFI_LED_PIN, LOW);
+  xTaskCreatePinnedToCore(networkTask, "network", NET_STACK_BYTES,
+                          NULL, NET_PRIORITY, NULL, NET_CORE);
 
   // Button Thread
   pinMode(BUTTON_PIN, INPUT_PULLUP);
