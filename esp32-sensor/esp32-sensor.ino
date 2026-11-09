@@ -166,8 +166,8 @@ void tempHumidityTask(void *pvParameters) {
     if(!isnan(temp.temperature) && !isnan(humidity.relative_humidity)) {
         float tempF = temp.temperature * 9.0 / 5.0 + 32.0;
         //bool okT = publishValue("sensor/house1/primetime1/temperature", tempF);
-        bool okT = publishValue("sensors/temperature", tempF);
-        bool okH = publishValue("sensor/house1/primetime1/humidity",
+        bool okT = publishValue("sensors/house1/primetime1/temperature", tempF);
+        bool okH = publishValue("sensors/house1/primetime1/humidity",
                                 humidity.relative_humidity);
         Serial.printf("Temp: %.1f F (%s) | Humidity: %.1f %% (%s)\n",
                       tempF, okT ? "queued" : "DROPPED",

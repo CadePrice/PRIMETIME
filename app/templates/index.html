@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRIMETIME Dashboard</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --text:#1d2430; --muted:#6b7280; --line:#e3e6eb;
+          --temp:#e4572e; --hum:#2e86de; --ok:#2da44e; --bad:#cf222e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --card:#1e232b; --text:#e6e9ee; --muted:#8b95a5; --line:#2e3541; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px 16px; background:var(--bg); color:var(--text);
+         font-family:system-ui,sans-serif; }
+  h1 { margin:0 0 4px; font-size:1.4rem; }
+  .status { color:var(--muted); font-size:.85rem; margin-bottom:20px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%;
+         background:var(--bad); margin:0 4px 0 12px; }
+  .dot.on { background:var(--ok); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;
+          max-width:900px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .label { color:var(--muted); font-size:.85rem; }
+  .value { font-size:2.6rem; font-weight:600; margin:4px 0 8px; }
+  svg { width:100%; height:90px; display:block; }
+  .times { display:flex; justify-content:space-between; color:var(--muted); font-size:.7rem; }
+  #alerts { position:fixed; top:16px; right:16px; display:flex; flex-direction:column;
+            gap:10px; z-index:10; max-width:min(320px,calc(100vw - 32px)); }
+  .alert { background:var(--card); border:1px solid var(--line); border-left:5px solid var(--hum);
+           border-radius:10px; padding:12px 14px; box-shadow:0 4px 14px rgba(0,0,0,.18);
+           cursor:pointer; animation:slide .25s ease-out; }
+  .alert.motion { border-left-color:var(--temp); }
+  .alert b { display:block; }
+  .alert span { color:var(--muted); font-size:.8rem; }
+  @keyframes slide { from { transform:translateX(30px); opacity:0; } }
+</style>
+</head>
+<body>
+<div id="alerts"></div>
+<h1>PRIMETIME</h1>
+<div class="status">
+  <span class="dot" id="d-mqtt"></span>MQTT
+  <span class="dot" id="d-sensor"></span>ESP32
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Temperature</div>
+    <div class="value" id="temp">--</div>
+    <svg id="g-temp" viewBox="0 0 200 90" preserveAspectRatio="none"></svg>
+    <div class="times" id="t-temp"></div>
+  </div>
+  <div class="card">
+    <div class="label">Humidity</div>
+    <div class="value" id="hum">--</div>
+    <svg id="g-hum" viewBox="0 0 200 90" preserveAspectRatio="none"></svg>
+    <div class="times" id="t-hum"></div>
+  </div>
+</div>
+
+<script>
+const ALERT_MS = 6000;
+let lastEventId = null;   // null until first poll, so old events don't replay on load
+
+function drawGraph(svgId, timesId, points, color) {
+  const svg = document.getElementById(svgId);
+  const times = document.getElementById(timesId);
+  if (points.length === 0) { svg.innerHTML = ""; times.textContent = ""; return; }
+  const vals = points.map(p => p.value);
+  let min = Math.min(...vals), max = Math.max(...vals);
+  if (max - min < 1) { min -= 0.5; max += 0.5; }
+  const x = i => points.length === 1 ? 100 : 10 + i * 180 / (points.length - 1);
+  const y = v => 75 - (v - min) / (max - min) * 60;
+  const path = points.map((p, i) => `${i ? "L" : "M"}${x(i)},${y(p.value)}`).join(" ");
+  const dots = points.map((p, i) =>
+    `<circle cx="${x(i)}" cy="${y(p.value)}" r="3.5" fill="${color}"/>`).join("");
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="${color}" stroke-width="2"
+                    vector-effect="non-scaling-stroke"/>${dots}`;
+  times.innerHTML = `<span>${points[0].time}</span><span>${points[points.length-1].time}</span>`;
+}
+
+function showAlert(ev) {
+  const el = document.createElement("div");
+  el.className = "alert " + ev.type;
+  el.innerHTML = ev.type === "doorbell"
+    ? `<b>🔔 Doorbell</b><span>Someone is at the door · ${ev.time}</span>`
+    : `<b>🚶 Motion detected</b><span>${ev.time}</span>`;
+  const remove = () => el.remove();
+  el.onclick = remove;
+  setTimeout(remove, ALERT_MS);
+  document.getElementById("alerts").appendChild(el);
+}
+
+async function poll() {
+  try {
+    const d = await (await fetch("/api/data")).json();
+    const s = d.sensors;
+    document.getElementById("temp").textContent = s.temperature === "--" ? "--" : `${parseFloat(s.temperature).toFixed(1)} °F`;
+    document.getElementById("hum").textContent = s.humidity === "--" ? "--" : `${parseFloat(s.humidity).toFixed(1)} %`;
+    drawGraph("g-temp", "t-temp", d.history.temperature, "var(--temp)");
+    drawGraph("g-hum", "t-hum", d.history.humidity, "var(--hum)");
+    document.getElementById("d-mqtt").classList.toggle("on", d.connections.mqtt);
+    document.getElementById("d-sensor").classList.toggle("on", d.connections.sensor);
+
+    const newest = d.events.length ? d.events[d.events.length - 1].id : 0;
+    if (lastEventId === null) lastEventId = newest;
+    else {
+      d.events.filter(e => e.id > lastEventId).forEach(showAlert);
+      lastEventId = Math.max(lastEventId, newest);
+    }
+  } catch (e) { /* server unreachable; retry next tick */ }
+}
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
