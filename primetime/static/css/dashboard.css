@@ -1,0 +1,338 @@
+/* ==== THEME ==== */
+:root {
+    --bg: #0f1115;          /* page background */
+    --surface: #181b21;     /* header + cards */
+    --surface-2: #22262e;   /* dropdown, hover */
+    --border: #2c313a;
+    --text: #e8e9ec;
+    --text-muted: #9aa0aa;
+    --accent: #e10600;      /* broadcast red */
+    --radius: 8px;
+
+    /* status colors */
+    --status-online: #22c55e;   /* green */
+    --status-partial: #eab308;  /* yellow */
+    --status-offline: #ef4444;  /* red */
+}
+
+/* ===== Base ===== */
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ===== Header bar ===== */
+.header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 3px solid var(--accent);
+}
+
+.logo {
+    color: var(--text);
+    text-decoration: none;
+    font-family: "League Gothic", "Oswald", "Arial Narrow", sans-serif;
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    transform: scaleY(1.2);
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+/* ===== Notification bell ===== */
+.bell {
+    position: relative;
+    display: inline-flex;
+    padding: 6px;
+    border-radius: 50%;
+    color: var(--text-muted);
+    transition: color 0.15s, background 0.15s;
+}
+
+.bell:hover {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.badge {
+    position: absolute;
+    top: -2px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 2px solid var(--surface);   /* gap between badge and icon */
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.badge[hidden] {
+    display: none;   /* otherwise display:flex beats the hidden attribute */
+}
+
+/* ===== User menu ===== */
+.user-menu {
+    position: relative;
+}
+
+.user-menu summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    cursor: pointer;
+    list-style: none;                    /* hide marker (Firefox) */
+    user-select: none;
+}
+
+.user-menu summary::-webkit-details-marker {
+    display: none;                       /* hide marker (Chrome/Safari) */
+}
+
+.user-menu summary:hover,
+.user-menu[open] summary {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.username {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.sign-out {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+    font-size: 0.9rem;
+}
+
+.sign-out:hover {
+    color: var(--accent);
+}
+
+/* ===== Device availability (status bar under the header) ===== */
+.device-availability {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 10px 24px;
+    font-size: 0.95rem;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* The dot: 1em = same size as the text next to it */
+.status-dot {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--text-muted);       /* grey if state is unknown */
+}
+
+.status-item[data-state="online"]  .status-dot { background: var(--status-online); }
+.status-item[data-state="partial"] .status-dot { background: var(--status-partial); }
+.status-item[data-state="offline"] .status-dot { background: var(--status-offline); }
+
+.status-label {
+    font-weight: 600;
+}
+
+.status-text {
+    color: var(--text-muted);
+}
+
+/* Partial / offline: status text + error code take the dot's color */
+.status-item[data-state="partial"] .status-error { color: var(--status-partial); }
+.status-item[data-state="offline"] :is(.status-text, .status-error) { color: var(--status-offline); }
+
+/* Partial: hide the word "Partial" (the yellow color + error code say it) */
+.status-item[data-state="partial"] .status-text { display: none; }
+
+
+/* ===== Cards (shared) ===== */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.card-title {
+    margin: 0 0 12px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+/* ===== Weather + live feed row ===== */
+.sensor-dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;     /* weather left, live feed right */
+    gap: 16px;
+    padding: 0 24px;
+}
+
+@media (max-width: 600px) {
+    .sensor-dashboard {
+        grid-template-columns: 1fr;     /* stack on phones */
+    }
+}
+
+/* ----- Weather ----- */
+.sensor-dashboard > .card {
+    min-height: 200px;                  /* taller cards */
+    box-sizing: border-box;
+}
+
+.weather {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;            /* center the readings in the card */
+}
+
+.weather .card-title {
+    position: absolute;                 /* top-left, mirrors the LIVE tag */
+    top: 14px;
+    left: 20px;
+    margin: 0;
+}
+
+.weather-main {
+    display: flex;
+    flex-direction: column;             /* icon on top, readings below */
+    align-items: center;
+    gap: 12px;
+}
+
+.weather-icon {
+    width: 110px;                       /* much bigger than the readings */
+    height: 110px;
+    flex-shrink: 0;
+    color: var(--status-partial);       /* sunny yellow */
+}
+
+/* Temperature and humidity: same font, size and height */
+.reading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-family: "League Gothic", "Oswald", "Arial Narrow", sans-serif;
+    font-size: 2.25rem;
+    line-height: 1;
+}
+
+.readings {
+    display: flex;
+    align-items: center;
+    gap: 24px;                          /* temp and humidity side by side */
+}
+
+.reading-icon {
+    width: 0.6em;                       /* scales with the reading text */
+    height: 0.6em;
+    color: #38bdf8;                     /* water blue */
+}
+
+/* ----- Live feed ----- */
+.live-feed {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--text);
+    text-decoration: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.live-feed:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+}
+
+.live-pill {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
+.feed-icon {
+    width: 48px;
+    height: 48px;
+}
+
+.feed-title {
+    font-family: "League Gothic", "Oswald", "Arial Narrow", sans-serif;
+    font-size: 1.8rem;
+    letter-spacing: 0.05em;
+}
+
+.feed-sub {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/* Show the right subtitle for the camera state */
+.live-feed .feed-sub-offline { display: none; }
+.live-feed:not([data-state="online"]) .feed-sub-online  { display: none; }
+.live-feed:not([data-state="online"]) .feed-sub-offline { display: inline; color: var(--status-offline); }
+
+/* Camera not online: greyed out and not clickable */
+.live-feed:not([data-state="online"]) {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: not-allowed;
+}
+
+.live-feed:not([data-state="online"]) .live-pill {
+    background: var(--text-muted);
+}

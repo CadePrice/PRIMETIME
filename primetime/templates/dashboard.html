@@ -4,23 +4,133 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
 
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=League+Gothic&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
         <title>PRIMETIME</title>
     </head>
-    <body class = "dashboard">
-        <section class="header">
 
-        </section>
+    <body class="dashboard">
+        {# TEMP test values: remove once app.py passes these in #}
+        {% set unread = 12 %}
+        {% set username = "cade" %}
+        {% set camera_state = "online" %}      {# online | partial | offline #}
+        {% set doorbell_state = "partial" %}  {# online | partial | offline #}
+        {% set doorbell_error = 1 %}          {# 1 = sensor, 2 = actuator #}
+        {% set temperature = 72 %}            {# °F, from sensor ESP #}
+        {% set humidity = 45 %}               {# %, from sensor ESP #}
+
+        <header class="header">
+            <!-- Left: company name -->
+            <a class="logo" href="#">PRIMETIME</a>
+
+            <!-- Right: bell + user menu -->
+            <nav class="header-actions">
+
+                <!-- Notification bell: link to notifications page + unread badge -->
+                <a class="bell" href="#" aria-label="Notifications">
+                    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24"
+                         fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+                    </svg>
+                    <span id="bell-badge" class="badge" {% if unread == 0 %}hidden{% endif %}>
+                        {{ '9+' if unread > 9 else unread }}
+                    </span>
+                </a>
+
+                <!-- User menu: click the icon to reveal "Sign out" -->
+                <details class="user-menu">
+                    <summary aria-label="Account menu">
+                        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24"
+                             fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="10" r="3"/>
+                            <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/>
+                        </svg>
+                        <span class="username">{{ username }}</span>
+                    </summary>
+                    <a class="sign-out" href="#">Sign out</a>
+                </details>
+
+            </nav>
+        </header>
+
         <section class="main">
             <section class="device-availability">
+                <!-- Camera -->
+                <div class="status-item" id="status-camera" data-state="{{ camera_state }}">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-label">Camera</span>
+                    <span class="status-text">{{ camera_state | capitalize }}</span>
+                </div>
 
+                <!-- Doorbell: sensor + actuator ESP32s -->
+                <div class="status-item" id="status-doorbell" data-state="{{ doorbell_state }}">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-label">Doorbell</span>
+                    <span class="status-text">{{ doorbell_state | capitalize }}</span>
+                    <span class="status-error" id="doorbell-error" {% if doorbell_state == "online" %}hidden{% endif %}>
+                        Error ({{ doorbell_error }})
+                    </span>
+                </div>
             </section>
             <section class="sensor-dashboard">
-                <section class="weather">
-                
+                <!-- Weather: temp + humidity from sensor ESP, icon from Open-Meteo -->
+                <section class="card weather">
+                    <h2 class="card-title">Weather</h2>
+
+                    <div class="weather-main">
+                        <!-- Placeholder icon (Lucide "sun"); later chosen from the weather code -->
+                        <svg class="weather-icon" aria-hidden="true" viewBox="0 0 24 24"
+                             fill="none" stroke="currentColor" stroke-width="2"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="4"/>
+                            <path d="M12 2v2"/><path d="M12 20v2"/>
+                            <path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/>
+                            <path d="M2 12h2"/><path d="M20 12h2"/>
+                            <path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+                        </svg>
+
+                        <div class="readings">
+                            <p class="reading" aria-label="Temperature">
+                                <span id="temp-value">{{ temperature }}</span>°F
+                            </p>
+
+                            <p class="reading" aria-label="Humidity">
+                                <!-- Lucide "droplet" -->
+                                <svg class="reading-icon" aria-hidden="true" viewBox="0 0 24 24"
+                                     fill="none" stroke="currentColor" stroke-width="2"
+                                     stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>
+                                </svg>
+                                <span id="humidity-value">{{ humidity }}</span>%
+                            </p>
+                        </div>
+                    </div>
                 </section>
-                <section class="live-feed">
-                
-                </section>
+
+                <!-- Live feed: only clickable while the camera is online -->
+                <a class="card live-feed" id="live-feed" href="#"
+                   data-state="{{ camera_state }}"
+                   {% if camera_state != "online" %}aria-disabled="true" tabindex="-1"{% endif %}>
+                    <span class="live-pill">● LIVE</span>
+
+                    <!-- Lucide "video" -->
+                    <svg class="feed-icon" aria-hidden="true" viewBox="0 0 24 24"
+                         fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.47.47 0 0 0-.752-.4L16 10.5"/>
+                        <rect x="2" y="6" width="14" height="12" rx="2"/>
+                    </svg>
+
+                    <span class="feed-title">Live feed</span>
+                    <span class="feed-sub feed-sub-online">Tap to view the front door</span>
+                    <span class="feed-sub feed-sub-offline">Camera offline</span>
+                </a>
             </section>
             <section class="quotes">
 
