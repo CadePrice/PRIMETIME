@@ -105,6 +105,33 @@ def _notify():
         print("[mqtt] listener error:", e)
 
 # --------------------------------------------------
+# SNAPSHOT HOOK (app.py registers camera.save_snapshot here)
+# --------------------------------------------------
+# A hook instead of "import camera": camera.py already imports this module,
+# so importing it back would be circular.
+
+_snapshot_taker = None
+
+
+def set_snapshot_taker(callback):
+    """Register callback(event_type) -> "snaps/x.jpg" or None.
+
+    Used for events whose payload has no snapshot (doorbell/motion from the ESP).
+    """
+    global _snapshot_taker
+    _snapshot_taker = callback
+
+
+def _take_snapshot(event_type):
+    if _snapshot_taker is None:
+        return None
+    try:
+        return _snapshot_taker(event_type)
+    except Exception as e:   # never let a camera error kill the MQTT thread
+        print("[mqtt] snapshot error:", e)
+        return None
+
+# --------------------------------------------------
 # MQTT CALLBACKS
 # --------------------------------------------------
 
@@ -208,10 +235,12 @@ def _save_event(event_type, payload):
     # db.py stores snapshot paths relative to static/ ("snaps/x.jpg");
     # accept "static/snaps/x.jpg" too.
     snapshot = details.get("snapshot")
-    if isinstance(snapshot, str):
+    if isinstance(snapshot, str) and snapshot:
         snapshot = snapshot.removeprefix("/").removeprefix("static/")
     else:
-        snapshot = None
+        # No photo in the payload (e.g. doorbell/motion from the sensor ESP):
+        # grab the camera's newest frame now. None if the camera is offline.
+        snapshot = _take_snapshot(event_type)
 
     try:
         db.add_event(event_type, ts, snapshot)

@@ -137,6 +137,7 @@ def refresh_loop():
 
 if __name__ == "__main__":
     mqtt_client.set_listener(push_state)   # push on every MQTT change/event
+    mqtt_client.set_snapshot_taker(camera.save_snapshot)   # photo for ESP events
     mqtt_client.start()   # background MQTT thread; connects/retries on its own
     camera.start()        # capture thread (after MQTT: it publishes camera status)
     socketio.start_background_task(refresh_loop)

@@ -4,3 +4,9 @@ esp32-sensor/esp32-sensor-secrets.h
 
 # Build output
 build/
+
+# Runtime data (Pi app)
+primetime/events.db
+primetime/static/snaps/
+primetime/camera_test.jpg
+primetime/detector_test.jpg
