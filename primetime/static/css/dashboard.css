@@ -353,3 +353,70 @@ body {
 .live-feed:not([data-state="online"]) .live-pill {
     background: var(--text-muted);
 }
+
+/* ----- Live feed popup ----- */
+.feed-dialog {
+    width: min(960px, 92vw);
+    padding: 0;
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.feed-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.feed-dialog-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 10px 16px;
+}
+
+.feed-dialog .live-pill {
+    position: static;                    /* sits in the row, not pinned to a corner */
+}
+
+.feed-dialog-title {
+    flex: 1;
+    margin: 0;
+    font-family: "League Gothic", "Oswald", "Arial Narrow", sans-serif;
+    font-size: 1.5rem;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+}
+
+.feed-dialog form {
+    margin: 0;
+}
+
+.feed-dialog-close {
+    display: flex;
+    padding: 6px;
+    border: none;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.feed-dialog-close:hover {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.feed-dialog-close svg {
+    width: 22px;
+    height: 22px;
+}
+
+.feed-dialog-video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;                /* matches camera.py's 1280x720 */
+    object-fit: contain;
+    background: #000;                    /* black until the first frame arrives */
+}

@@ -129,6 +129,26 @@
                     <span class="feed-sub feed-sub-offline">Camera offline</span>
                 </a>
             </section>
+
+            <!-- Live feed popup: live.js sets the <img> src to /video_feed when it
+                 opens and removes it when it closes, so the stream only runs while visible -->
+            <dialog class="feed-dialog" id="feed-dialog" aria-labelledby="feed-dialog-title"
+                    data-src="{{ url_for('video_feed') }}">
+                <div class="feed-dialog-head">
+                    <span class="live-pill">● LIVE</span>
+                    <h2 class="feed-dialog-title" id="feed-dialog-title">Front door</h2>
+                    <form method="dialog">
+                        <button class="feed-dialog-close" aria-label="Close live feed">
+                            <!-- Lucide "x" -->
+                            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+                            </svg>
+                        </button>
+                    </form>
+                </div>
+                <img class="feed-dialog-video" id="feed-dialog-video" alt="Live camera feed">
+            </dialog>
             <section class="quotes">
 
             </section>

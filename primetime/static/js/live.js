@@ -38,6 +38,32 @@
         }
     }
 
+    // ----- Live feed popup -----
+    const feedLink = document.getElementById("live-feed");
+    const feedDialog = document.getElementById("feed-dialog");
+    const feedVideo = document.getElementById("feed-dialog-video");
+
+    if (feedLink && feedDialog && feedVideo) {
+        feedLink.addEventListener("click", (e) => {
+            e.preventDefault();                          // href="#" would jump to the top
+            if (feedLink.dataset.state !== "online") return;
+            // New URL each time so the browser opens a fresh stream, not a cached one.
+            feedVideo.src = `${feedDialog.dataset.src}?t=${Date.now()}`;
+            feedDialog.showModal();
+        });
+
+        // Fires for the close button, Esc, and close() below: stop the stream
+        // so the Pi stops encoding JPEGs nobody sees.
+        feedDialog.addEventListener("close", () => {
+            feedVideo.removeAttribute("src");
+        });
+
+        // Click on the dark backdrop (outside the box) closes it too.
+        feedDialog.addEventListener("click", (e) => {
+            if (e.target === feedDialog) feedDialog.close();
+        });
+    }
+
     socket.on("state", (s) => {
         // Notifications page: a new event arrived → reload to show it
         // (the reload also marks it read, like opening the page does).
@@ -57,6 +83,8 @@
         }
 
         updateLiveFeed(s.camera_state);
+        // Camera dropped while the popup is open: the stream has ended, so close it.
+        if (feedDialog && feedDialog.open && s.camera_state !== "online") feedDialog.close();
 
         setText("temp-value", s.temperature ?? "---");
         setText("humidity-value", s.humidity ?? "---");

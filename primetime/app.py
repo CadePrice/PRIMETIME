@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from flask import Flask, render_template
+from flask import Flask, Response, render_template
 from flask_socketio import SocketIO, emit
 
+import camera
 import db
 import mqtt_client
 from weather import LOCATION_NAME, get_weather_bucket
@@ -92,6 +93,14 @@ def dashboard():
     )
 
 
+@app.route("/video_feed")
+def video_feed():
+    """MJPEG live feed: the browser shows it in a plain <img>.
+    Reads frames from camera.py's capture thread; never opens the camera itself."""
+    return Response(camera.mjpeg_frames(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
 @app.route("/notifications")
 def notifications():
     # Read first, then mark read: events with read == False are the ones
@@ -129,8 +138,10 @@ def refresh_loop():
 if __name__ == "__main__":
     mqtt_client.set_listener(push_state)   # push on every MQTT change/event
     mqtt_client.start()   # background MQTT thread; connects/retries on its own
+    camera.start()        # capture thread (after MQTT: it publishes camera status)
     socketio.start_background_task(refresh_loop)
 
     # debug=True shows errors in the browser. use_reloader=False because the
-    # auto-reloader runs this file twice, which would start two MQTT clients.
+    # auto-reloader runs this file twice, which would start two MQTT clients
+    # and try to open the camera twice.
     socketio.run(app, debug=True, use_reloader=False)
