@@ -1,191 +1,143 @@
 /*
-  Embedded IoT Project
+  Embedded IoT Project - Actuator node
   Board: ESP32-WROOM-DA
+
+  Listens for commands from the Pi:
+    cmd/house1/primetime1/buzzer = "on"     -> buzzer on GPIO 26 (PWM) for 3 seconds
+    cmd/house1/primetime1/floodlight = "on" -> LED on GPIO 25 for 15 seconds
 */
 
-#include <Adafruit_AHTX0.h>
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
-#include <Wire.h>
-#include "esp32-sensor-secrets.h"
+#include "esp32-actuator-secrets.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
 
 // PINS
-const int TRIG_PIN = 5;
-const int ECHO_PIN = 18;
-const int LIGHT_DO_PIN = 19;
-const int BUTTON_PIN = 26;
-const int I2C_SDA_PIN = 27;
-const int I2C_SCL_PIN = 33;
+const int BUZZER_PIN = 26;
+const int FLOODLIGHT_PIN = 33;
 const int WIFI_LED_PIN = 2;                         // onboard LED, on while WiFi is connected
 
+// BUZZER PWM
+const uint32_t BUZZER_FREQ_HZ = 2000;               // tone frequency
+const uint8_t BUZZER_RES_BITS = 8;
+const uint8_t BUZZER_CHANNEL = 0;                   // only used on core 2.x
+const uint32_t BUZZER_ON_MS = 3000;
+
+// FLOODLIGHT
+const uint32_t FLOODLIGHT_ON_MS = 15000;
+
 // RTOS CONFIG
-const uint32_t AHT_POLL_MS = 10000;
-const uint32_t AHT_STACK_BYTES = 6144;
-const UBaseType_t AHT_PRIORITY = 1;
-const uint32_t BUTTON_STACK_BYTES = 3072;
-const UBaseType_t BUTTON_PRIORITY = 2;              // above sensor tasks
-const uint32_t BUTTON_DEBOUNCE_MS = 50;
-const uint32_t MOTION_STACK_BYTES = 4096;
-const UBaseType_t MOTION_PRIORITY = 1;
-const uint32_t MOTION_POLL_MS = 150;
-const int MOTION_CONFIRM = 3;
-const uint32_t MOTION_COOLDOWN_MS = 10000;
-const float DETECTION_IN = 24.0;
-const int DARK_SIGNAL = HIGH;
-const BaseType_t SENSOR_CORE = 1;                   // WiFi stack lives on core 0
+const uint32_t BUZZER_STACK_BYTES = 2048;
+const UBaseType_t BUZZER_PRIORITY = 2;
+const uint32_t FLOODLIGHT_STACK_BYTES = 2048;
+const UBaseType_t FLOODLIGHT_PRIORITY = 2;
+const BaseType_t ACTUATOR_CORE = 1;                 // WiFi stack lives on core 0
 const uint32_t NET_STACK_BYTES = 8192;
 const UBaseType_t NET_PRIORITY = 1;
 const BaseType_t NET_CORE = 0;
 const uint32_t NET_RETRY_MS = 5000;
-const uint32_t NET_QUEUE_WAIT_MS = 100;
-const char *STATUS_TOPIC = "status/house1/primetime1";
+const uint32_t NET_LOOP_MS = 10;
+
+// MQTT TOPICS
+const char *STATUS_TOPIC = "status/house1/primetime1/actuator";
+const char *BUZZER_TOPIC = "cmd/house1/primetime1/buzzer";
+const char *FLOODLIGHT_TOPIC = "cmd/house1/primetime1/floodlight";
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
+TaskHandle_t buzzerTaskHandle;
+TaskHandle_t floodlightTaskHandle;
 
-// MQTT EVENT QUEUE
-struct MqttMessage {
-  char topic[48];
-  char payload[96];
-};
+// PWM helpers that work on both ESP32 Arduino core 2.x and 3.x
+void buzzerOff();
 
-TaskHandle_t buttonTaskHandle;
-QueueHandle_t mqttQueue;
-Adafruit_AHTX0 aht;
-
-bool publishValue(const char *topic, float value) {
-  MqttMessage msg;
-  strlcpy(msg.topic, topic, sizeof(msg.topic));
-  snprintf(msg.payload, sizeof(msg.payload), "%.1f", value);
-  return xQueueSend(mqttQueue, &msg, 0) == pdTRUE;
+void buzzerInit() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(BUZZER_PIN, BUZZER_FREQ_HZ, BUZZER_RES_BITS);
+#else
+  ledcSetup(BUZZER_CHANNEL, BUZZER_FREQ_HZ, BUZZER_RES_BITS);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+#endif
+  buzzerOff();
 }
 
-bool publishEvent(const char *topic, const char *payload) {
-  MqttMessage msg;
-  strlcpy(msg.topic, topic, sizeof(msg.topic));
-  strlcpy(msg.payload, payload, sizeof(msg.payload));
-  return xQueueSend(mqttQueue, &msg, 0) == pdTRUE;
+void buzzerOn() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWriteTone(BUZZER_PIN, BUZZER_FREQ_HZ);
+#else
+  ledcWriteTone(BUZZER_CHANNEL, BUZZER_FREQ_HZ);
+#endif
 }
 
-/**
- * @brief Ensures it is safe to access memory, preventing risk of crash.
- */
-void IRAM_ATTR buttonISR() {
-  BaseType_t woken = pdFALSE;
-  vTaskNotifyGiveFromISR(buttonTaskHandle, &woken);
-  if(woken) portYIELD_FROM_ISR();
-}
-
-float measureDistanceInches() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-
-  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-  if (duration == 0) return -1.0;
-  return duration * 0.0133 / 2.0;
+void buzzerOff() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(BUZZER_PIN, 0);
+#else
+  ledcWrite(BUZZER_CHANNEL, 0);
+#endif
 }
 
 /**
- * @brief Checks for a button press and publishes event. Only publishes on first contact
- * 
+ * @brief Sleeps until the MQTT callback notifies it, then buzzes for BUZZER_ON_MS.
+ *
  * @param *pvParameters Thread parameters initialized when creating task
  */
-void buttonTask(void *pvParameters) {
-  for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);        // sleep until ISR fires
-
-    vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));  // let contact settle
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      bool ok = publishEvent("event/house1/primetime1/doorbell", "pressed");
-      Serial.printf("Button pressed (%s)\n", ok ? "queued" : "DROPPED");
-
-      while(digitalRead(BUTTON_PIN) == LOW)
-        vTaskDelay(pdMS_TO_TICKS(10));
-      vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));
-    }
-    ulTaskNotifyTake(pdTRUE, 0);
-  }
-}
-
-/**
- * @brief sChecks if it is DARK and if there is motion and fires event if true
- * 
- * @param *pvParameters Thread parameters initialized when creating task
- */
-void motionTask(void *pvParameters) {
-  TickType_t lastWake = xTaskGetTickCount();
-  TickType_t lastEvent = 0;
-  bool everFired = false;
-  int confirmed = 0;
-
+void buzzerTask(void *pvParameters) {
   for(;;) {
-    float dist = measureDistanceInches();
-    bool detected = (dist > 0 && dist <= DETECTION_IN);
-    bool dark = (digitalRead(LIGHT_DO_PIN) == DARK_SIGNAL);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);        // sleep until a command arrives
 
-    confirmed = (detected && dark) ? confirmed + 1 : 0;
+    Serial.println("Buzzer ON");
+    buzzerOn();
+    vTaskDelay(pdMS_TO_TICKS(BUZZER_ON_MS));
+    buzzerOff();
+    Serial.println("Buzzer OFF");
 
-    bool cooled = !everFired || 
-      (xTaskGetTickCount() - lastEvent) >= pdMS_TO_TICKS(MOTION_COOLDOWN_MS);
-
-    // DEBUGGING LOG Serial.printf("MOTION: (%f) | DETECT: (%d) | DARK: (%d) | COOLED: (%d)\n", dist, detected, dark, cooled);
-
-    if(confirmed >= MOTION_CONFIRM && cooled) {
-      bool ok = publishEvent("event/house1/primetime1/motion", "detected");
-      Serial.printf("Night motion at %.1f in (%s)\n", dist, ok ? "queued" : "DROPPED");
-      lastEvent = xTaskGetTickCount();
-      everFired = true;
-      confirmed = 0;
-    }
-
-    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(MOTION_POLL_MS));
+    ulTaskNotifyTake(pdTRUE, 0);                    // drop commands that came in while buzzing
   }
 }
 
 /**
- * @brief Publishes temperature (℉) and humidity data to MQTT on interval
- * 
+ * @brief Sleeps until the MQTT callback notifies it, then lights the LED for FLOODLIGHT_ON_MS.
+ *
  * @param *pvParameters Thread parameters initialized when creating task
  */
-void tempHumidityTask(void *pvParameters) {
-  TickType_t lastWake = xTaskGetTickCount();
-
+void floodlightTask(void *pvParameters) {
   for(;;) {
-    sensors_event_t humidity, temp;
-    aht.getEvent(&humidity, &temp);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);        // sleep until a command arrives
 
-    if(!isnan(temp.temperature) && !isnan(humidity.relative_humidity)) {
-        float tempF = temp.temperature * 9.0 / 5.0 + 32.0;
-        //bool okT = publishValue("sensor/house1/primetime1/temperature", tempF);
-        bool okT = publishValue("sensors/house1/primetime1/temperature", tempF);
-        bool okH = publishValue("sensors/house1/primetime1/humidity",
-                                humidity.relative_humidity);
-        Serial.printf("Temp: %.1f F (%s) | Humidity: %.1f %% (%s)\n",
-                      tempF, okT ? "queued" : "DROPPED",
-                      humidity.relative_humidity, okH ? "queued" : "DROPPED");
-    }
+    Serial.println("Floodlight ON");
+    digitalWrite(FLOODLIGHT_PIN, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(FLOODLIGHT_ON_MS));
+    digitalWrite(FLOODLIGHT_PIN, LOW);
+    Serial.println("Floodlight OFF");
 
-    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(AHT_POLL_MS));
+    ulTaskNotifyTake(pdTRUE, 0);                    // drop commands that came in while lit
   }
+}
+
+/**
+ * @brief Runs inside mqtt.loop(). Only notifies tasks, never delays.
+ */
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
+  bool isOn = (length == 2 && memcmp(payload, "on", 2) == 0);
+  Serial.printf("MQTT %s -> %.*s\n", topic, (int)length, (const char *)payload);
+
+  if(!isOn) return;
+  if(strcmp(topic, BUZZER_TOPIC) == 0)
+    xTaskNotifyGive(buzzerTaskHandle);
+  else if(strcmp(topic, FLOODLIGHT_TOPIC) == 0)
+    xTaskNotifyGive(floodlightTaskHandle);
 }
 
 void networkTask(void *pvParameters) {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-
-  // TEMP: log the ESP32's MAC address, remove once no longer needed
-  Serial.printf("[TEMP] ESP32 MAC: %s\n", WiFi.macAddress().c_str());
 
   for(;;) {
     // WiFi
@@ -205,12 +157,14 @@ void networkTask(void *pvParameters) {
       Serial.printf("WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());
     }
 
-    // MQTT
+    // MQTT (subscribe on every connect, a reconnect drops subscriptions)
     if(!mqtt.connected()) {
       Serial.println("MQTT connecting...");
       if(mqtt.connect(MQTT_CLIENTID, STATUS_TOPIC, 1, true, "offline")) {
         mqtt.publish(STATUS_TOPIC, "online", true);
-        Serial.println("MQTT connected");
+        mqtt.subscribe(BUZZER_TOPIC);
+        mqtt.subscribe(FLOODLIGHT_TOPIC);
+        Serial.printf("MQTT connected, subscribed to %s and %s\n", BUZZER_TOPIC, FLOODLIGHT_TOPIC);
       } else {
         Serial.printf("MQTT failed, rc=%d\n", mqtt.state());
         vTaskDelay(pdMS_TO_TICKS(NET_RETRY_MS));
@@ -218,14 +172,8 @@ void networkTask(void *pvParameters) {
       }
     }
 
-    // Drain the queue
-    MqttMessage msg;
-    while(xQueueReceive(mqttQueue, &msg, pdMS_TO_TICKS(NET_QUEUE_WAIT_MS)) == pdTRUE) {
-      if(!mqtt.publish(msg.topic, msg.payload))
-        Serial.printf("Publish failed: %s\n", msg.topic);
-    }
     mqtt.loop();
-
+    vTaskDelay(pdMS_TO_TICKS(NET_LOOP_MS));
   }
 }
 
@@ -233,37 +181,25 @@ void setup()
 {
   Serial.begin(115200);
   delay(1000);
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-  mqttQueue = xQueueCreate(10, sizeof(MqttMessage));
+  // Actuator threads are created before the network task so their handles are valid in the callback
+
+  // Buzzer Thread
+  buzzerInit();
+  xTaskCreatePinnedToCore(buzzerTask, "buzzer", BUZZER_STACK_BYTES,
+                          NULL, BUZZER_PRIORITY, &buzzerTaskHandle, ACTUATOR_CORE);
+
+  // Floodlight Thread
+  pinMode(FLOODLIGHT_PIN, OUTPUT);
+  digitalWrite(FLOODLIGHT_PIN, LOW);
+  xTaskCreatePinnedToCore(floodlightTask, "floodlight", FLOODLIGHT_STACK_BYTES,
+                          NULL, FLOODLIGHT_PRIORITY, &floodlightTaskHandle, ACTUATOR_CORE);
 
   // WiFi Thread
   pinMode(WIFI_LED_PIN, OUTPUT);
   digitalWrite(WIFI_LED_PIN, LOW);
   xTaskCreatePinnedToCore(networkTask, "network", NET_STACK_BYTES,
                           NULL, NET_PRIORITY, NULL, NET_CORE);
-
-  // Button Thread
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-  xTaskCreatePinnedToCore(buttonTask, "button", BUTTON_STACK_BYTES,
-                          NULL, BUTTON_PRIORITY, &buttonTaskHandle, SENSOR_CORE);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
-
-  // Motion Thread
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  pinMode(LIGHT_DO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
-  xTaskCreatePinnedToCore(motionTask, "motion", MOTION_STACK_BYTES,
-                          NULL, MOTION_PRIORITY, NULL, SENSOR_CORE);
-
-  // Temperature/Humidity Thread
-  if(!aht.begin()) {
-    Serial.println("AHT10 not found, check wiring. Temp/humidity disabled.");
-  } else {
-    xTaskCreatePinnedToCore(tempHumidityTask, "aht10", AHT_STACK_BYTES,
-                            NULL, AHT_PRIORITY, NULL, SENSOR_CORE);
-  }
 }
 
 void loop() {
