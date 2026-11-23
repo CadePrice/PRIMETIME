@@ -6,7 +6,7 @@
 - Go one step at a time. Wait for the user's code before moving on.
 
 ## Progress
-Current status: waiting on hardware + Mosquitto to test MQTT end to end (code is written, only tested with fake messages).
+Current status: MQTT works end to end on the Pi (sensor ESP → Mosquitto → app). Round 2 hardware test in progress: sensor status-topic fix, live updates (Socket.IO), Pi forwarding cmd/ topics. Actuator sketch not written yet.
 
 Done:
 - [x] Dashboard skeleton, shared header (`templates/_header.html`: logo → dashboard, bell → /notifications with unread badge, username menu with Sign out), device availability, weather card, live feed card. CSS in `static/css/dashboard.css`.
@@ -15,10 +15,13 @@ Done:
 - [x] `db.py`: `EVENT_INFO` (icon/title/desc per type), `init_db()`, `add_event()` (prunes to 20 + deletes JPEGs), `get_latest()`, `unread_count()`, `mark_all_read()`. Snapshot paths stored relative to `static/`.
 - [x] `app.py`: dashboard passes MQTT state ("---" when no reading), device states + error codes, unread count; `/notifications` route (get_latest, then mark_all_read); time filters `clock_time`/`short_date`/`iso_time`; runs with `debug=True, use_reloader=False` (restart by hand after .py changes).
 - [x] `notification.html` + `static/css/notifications.css`: icon | title + desc | snapshot | timestamp, NEW marker for unread.
+- [x] Hardware test round 1 on the Pi: sensor ESP readings and doorbell/motion events reach the app. Fixed the sensor's `STATUS_TOPIC` (was `status/house1/primetime1`, now `.../sensor`).
+- [x] Pi forwards events to the actuator: `EVENT_COMMANDS` in `mqtt_client.py` (motion → cmd/.../floodlight, doorbell → cmd/.../buzzer).
+- [x] Flask-SocketIO (`async_mode="threading"`): `mqtt_client.set_listener()` → `app.push_state()` emits `"state"` (built by `live_state()`) on every MQTT change, on connect, and every 5 s. `static/js/live.js` (both pages) updates status lights, error codes, live-feed state, readings and badge; the notifications page reloads on a new event. App runs via `socketio.run(...)`. Socket.IO JS client loads from CDN.
 
 Next:
-1. [ ] Hardware test: `pip install paho-mqtt` on the Pi, ESPs publish status (retained, LWT), temp in °F, humidity, doorbell/motion events.
-2. [ ] Flask-SocketIO: live status lights, readings and bell count.
+1. [ ] Hardware test round 2: reflash sensor ESP, `pip install flask-socketio simple-websocket` on the Pi, check live updates and `cmd/#` forwarding.
+2. [ ] Actuator ESP sketch: own `MQTT_CLIENTID` (different from the sensor's), `STATUS_TOPIC` `.../actuator`, its own secrets header, subscribe to `cmd/.../floodlight` + `cmd/.../buzzer` on every connect, callback notifies an LED/buzzer task (no delays in the callback). Remove the copied sensor tasks.
 3. [ ] Quote card (quotes.json) and company blurb.
 4. [ ] `camera.py`: capture thread, detection, snapshots, MJPEG live feed, camera status.
 5. [ ] Login (Flask-Login); replace the temp `username` in `app.py`'s context processor.
@@ -89,15 +92,18 @@ cupcake detected (cupcake also triggers the iconic EDP sound on the actuator).
 | status/house1/primetime1/camera | Pi | Pi | Camera availability (1) |
 | status/house1/primetime1/sensor | Sensor ESP | Pi | Sensor availability (1) |
 | event/house1/primetime1/cupcake | Pi | Pi | Notification bell event (4) |
-| event/house1/primetime1/doorbell | Pi | Actuator ESP | Notification bell event (4) |
+| event/house1/primetime1/doorbell | Sensor ESP | Pi | Notification bell event (4); Pi forwards cmd/.../buzzer |
 | event/house1/primetime1/human | Pi | Pi | Notification bell event (4) |
-| event/house1/primetime1/motion | Pi | Actuator ESP | Notification bell event (4) |
+| event/house1/primetime1/motion | Sensor ESP | Pi | Notification bell event (4); Pi forwards cmd/.../floodlight |
 | sensors/house1/primetime1/temperature | Sensor ESP | Pi | Weather card (2) |
 | sensors/house1/primetime1/humidity | Sensor ESP | Pi | Weather card (2) |
+| cmd/house1/primetime1/floodlight | Pi | Actuator ESP | Turn on the LED (sent on motion) |
+| cmd/house1/primetime1/buzzer | Pi | Actuator ESP | Sound the buzzer (sent on doorbell) |
 
-Still to settle: the sources of the doorbell and motion events. If the physical button or motion sensor is on an ESP,
-that ESP should be the source and the Pi a recipient. Consider separate cmd/... topics for
-commands to the actuator (sound, floodlight).
+The sensor ESP has the doorbell button and the night-motion sensor (ultrasonic + light sensor).
+The Pi never republishes to event/ topics (it subscribes to them, which would loop). It sends
+actuator commands on cmd/ topics instead, mapped in `EVENT_COMMANDS` in `mqtt_client.py`.
+Command payload is "on"; commands are not retained.
 
 ## Design rules
 - Status topics: each node publishes "online" with retain on connect and sets a Last Will of

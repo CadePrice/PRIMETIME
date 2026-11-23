@@ -44,7 +44,7 @@ const UBaseType_t NET_PRIORITY = 1;
 const BaseType_t NET_CORE = 0;
 const uint32_t NET_RETRY_MS = 5000;
 const uint32_t NET_QUEUE_WAIT_MS = 100;
-const char *STATUS_TOPIC = "status/house1/primetime1";
+const char *STATUS_TOPIC = "status/house1/primetime1/sensor";
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);

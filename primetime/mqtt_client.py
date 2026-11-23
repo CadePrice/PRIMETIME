@@ -41,8 +41,8 @@ SENSOR_TOPICS = {
 }
 
 # One-shot events: payload is small JSON (not retained)
-#   event/house1/primetime1/doorbell ~ Pi asks the actuator to sound the buzzer
-#   event/house1/primetime1/motion   ~ Pi asks the actuator to turn on the LED
+#   event/house1/primetime1/doorbell ~ Doorbell press detected by sensor ESP
+#   event/house1/primetime1/motion   ~ Night motion detected by sensor ESP
 #   event/house1/primetime1/human    ~ Camera identifies a human
 #   event/house1/primetime1/cupcake  ~ Camera identifies a cupcake
 EVENT_TOPICS = {
@@ -50,6 +50,14 @@ EVENT_TOPICS = {
     "event/house1/primetime1/motion": "motion",
     "event/house1/primetime1/human": "human",
     "event/house1/primetime1/cupcake": "cupcake",
+}
+
+# Commands the Pi forwards to the actuator ESP when an event arrives (not retained)
+#   cmd/house1/primetime1/floodlight ~ Actuator turns on the LED (on motion)
+#   cmd/house1/primetime1/buzzer     ~ Actuator sounds the buzzer (on doorbell)
+EVENT_COMMANDS = {
+    "motion": ("cmd/house1/primetime1/floodlight", "on"),
+    "doorbell": ("cmd/house1/primetime1/buzzer", "on"),
 }
 
 # --------------------------------------------------
@@ -73,6 +81,30 @@ last_seen = {}             # topic -> time.monotonic() of the last reading
 mqtt_connected = False
 
 # --------------------------------------------------
+# CHANGE LISTENER (app.py uses this to push live updates to the browser)
+# --------------------------------------------------
+
+_listener = None
+
+
+def set_listener(callback):
+    """Register callback() to run after any state change or new event.
+
+    It runs on the MQTT thread, so it must be quick and must not raise.
+    """
+    global _listener
+    _listener = callback
+
+
+def _notify():
+    if _listener is None:
+        return
+    try:
+        _listener()
+    except Exception as e:   # never let a listener error kill the MQTT thread
+        print("[mqtt] listener error:", e)
+
+# --------------------------------------------------
 # MQTT CALLBACKS
 # --------------------------------------------------
 
@@ -94,6 +126,8 @@ def on_connect(client, userdata, flags, reason_code, properties):
             mqtt_connected = False
         print("MQTT connection failed:", reason_code)
 
+    _notify()
+
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     global mqtt_connected
@@ -104,6 +138,8 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
         mqtt_connected = False
         for key in device_status:
             device_status[key] = False
+
+    _notify()
 
 
 def on_message(client, userdata, message):
@@ -117,9 +153,19 @@ def on_message(client, userdata, message):
 
     print(f"MQTT received: {topic} = {payload}")
 
-    # One-shot events: saved to SQLite (outside data_lock, it's file I/O)
+    # One-shot events: forward a command to the actuator (if any), then
+    # save to SQLite (outside data_lock, it's file I/O)
     if topic in EVENT_TOPICS:
-        _save_event(EVENT_TOPICS[topic], payload)
+        event_type = EVENT_TOPICS[topic]
+
+        command = EVENT_COMMANDS.get(event_type)
+        if command:
+            cmd_topic, cmd_payload = command
+            client.publish(cmd_topic, cmd_payload, qos=1, retain=False)
+            print(f"MQTT forwarded: {event_type} -> {cmd_topic} = {cmd_payload}")
+
+        _save_event(event_type, payload)
+        _notify()
         return
 
     with data_lock:
@@ -137,6 +183,8 @@ def on_message(client, userdata, message):
                 last_seen[topic] = time.monotonic()
             except ValueError:
                 print("Bad numeric payload:", topic, payload)
+
+    _notify()   # outside data_lock: the listener calls get_state(), which takes the lock
 
 
 def _save_event(event_type, payload):

@@ -136,5 +136,9 @@
 
             </section>
         </section>
+
+        <!-- Live updates (Socket.IO client 4.x matches Flask-SocketIO 5.x) -->
+        <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+        <script src="{{ url_for('static', filename='js/live.js') }}"></script>
     </body>
 </html>

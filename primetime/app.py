@@ -1,13 +1,19 @@
 from datetime import datetime
 
 from flask import Flask, render_template
+from flask_socketio import SocketIO, emit
 
 import db
 import mqtt_client
 from weather import LOCATION_NAME, get_weather_bucket
 
+LIVE_REFRESH_S = 5   # also push state on a timer so stale readings turn into "---"
+
 # Flask finds templates/ and static/ automatically because they sit next to this file.
 app = Flask(__name__)
+
+# "threading" mode: plays nicely with the paho MQTT thread, no eventlet/gevent needed.
+socketio = SocketIO(app, async_mode="threading")
 
 db.init_db()   # create the events table if needed (safe every start)
 
@@ -64,17 +70,25 @@ def device_view(state):
     }
 
 
+def live_state():
+    """Everything that changes while a page is open. Used by the dashboard
+    route (first render) and by Socket.IO (live updates), so they always match."""
+    state = mqtt_client.get_state()
+    return {
+        "temperature": state["temperature"],   # float, or None → "---"
+        "humidity": state["humidity"],
+        "unread": db.unread_count(),           # bell badge
+        **device_view(state),
+    }
+
+
 @app.route("/")
 def dashboard():
-    state = mqtt_client.get_state()
     return render_template(
         "dashboard.html",
         location=LOCATION_NAME,
         weather_icon=get_weather_bucket(),   # cached, never raises
-        temperature=state["temperature"],    # float, or None → "---"
-        humidity=state["humidity"],
-        unread=db.unread_count(),            # bell badge
-        **device_view(state),
+        **live_state(),
     )
 
 
@@ -92,9 +106,31 @@ def login():
     return render_template("login.html")
 
 
+# ----- Socket.IO: live updates -----
+def push_state():
+    """Send the current state to every open page."""
+    socketio.emit("state", live_state())
+
+
+@socketio.on("connect")
+def on_socket_connect():
+    # TODO (Flask-Login): return False here if not current_user.is_authenticated
+    emit("state", live_state())   # just this new page
+
+
+def refresh_loop():
+    """Push on a timer too: a reading that stops arriving produces no MQTT
+    message, so this is what turns it into "---" after READING_TIMEOUT."""
+    while True:
+        socketio.sleep(LIVE_REFRESH_S)
+        push_state()
+
+
 if __name__ == "__main__":
+    mqtt_client.set_listener(push_state)   # push on every MQTT change/event
     mqtt_client.start()   # background MQTT thread; connects/retries on its own
+    socketio.start_background_task(refresh_loop)
 
     # debug=True shows errors in the browser. use_reloader=False because the
     # auto-reloader runs this file twice, which would start two MQTT clients.
-    app.run(debug=True, use_reloader=False)
+    socketio.run(app, debug=True, use_reloader=False)
