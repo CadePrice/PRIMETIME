@@ -244,12 +244,29 @@ body {
     gap: 12px;
 }
 
+.weather-location {
+    margin: 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
 .weather-icon {
-    width: 110px;                       /* much bigger than the readings */
+    width: 110px;                      /* much bigger than the readings */
     height: 110px;
     flex-shrink: 0;
-    color: var(--status-partial);       /* sunny yellow */
+    color: var(--text-muted);           /* clouds, fog, unknown */
 }
+
+/* Icon color per weather (data-weather is set from weather_icon) */
+.weather-icon[data-weather="clear-day"],
+.weather-icon[data-weather="partly-cloudy-day"] { color: var(--status-partial); }  /* sunny yellow */
+.weather-icon[data-weather="clear-night"],
+.weather-icon[data-weather="partly-cloudy-night"] { color: #c4b5fd; }              /* soft moon violet */
+.weather-icon[data-weather="rain"]    { color: #38bdf8; }                          /* water blue */
+.weather-icon[data-weather="snow"]    { color: #e0f2fe; }                          /* icy white */
+.weather-icon[data-weather="thunder"] { color: #facc15; }                          /* lightning yellow */
 
 /* Temperature and humidity: same font, size and height */
 .reading {

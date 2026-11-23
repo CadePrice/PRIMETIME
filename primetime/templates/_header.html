@@ -1,0 +1,38 @@
+{# Shared header for every logged-in page. Needs: unread, username #}
+<header class="header">
+    <!-- Left: company name (back to the dashboard) -->
+    <a class="logo" href="{{ url_for('dashboard') }}">PRIMETIME</a>
+
+    <!-- Right: bell + user menu -->
+    <nav class="header-actions">
+
+        <!-- Notification bell: link to notifications page + unread badge -->
+        <a class="bell" href="{{ url_for('notifications') }}" aria-label="Notifications">
+            <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+            </svg>
+            <span id="bell-badge" class="badge" {% if unread == 0 %}hidden{% endif %}>
+                {{ '9+' if unread > 9 else unread }}
+            </span>
+        </a>
+
+        <!-- User menu: click the icon to reveal "Sign out" -->
+        <details class="user-menu">
+            <summary aria-label="Account menu">
+                <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="10" r="3"/>
+                    <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/>
+                </svg>
+                <span class="username">{{ username }}</span>
+            </summary>
+            <a class="sign-out" href="#">Sign out</a>
+        </details>
+
+    </nav>
+</header>

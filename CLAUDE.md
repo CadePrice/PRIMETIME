@@ -6,16 +6,26 @@
 - Go one step at a time. Wait for the user's code before moving on.
 
 ## Progress
-Current task: the dashboard page, `primetime/templates/dashboard.html`.
-1. [x] Skeleton: doctype, head (charset, viewport, title), and body sections for header, device-availability, sensor-dashboard (weather + live-feed), quotes and company-blurb.
-2. [ ] Header: logo, notification bell link with a badge span, and a username button with a hidden "Sign out" dropdown. Claude has shown example markup in chat; the user is adding it.
-3. [ ] Content cards: device status, weather, live feed, quote and blurb.
-4. [ ] CSS in `static/` (linked with `url_for('static', ...)`).
-5. [ ] Minimal `app.py` route to serve the dashboard.
+Current status: waiting on hardware + Mosquitto to test MQTT end to end (code is written, only tested with fake messages).
+
+Done:
+- [x] Dashboard skeleton, shared header (`templates/_header.html`: logo → dashboard, bell → /notifications with unread badge, username menu with Sign out), device availability, weather card, live feed card. CSS in `static/css/dashboard.css`.
+- [x] `weather.py`: `LOCATION_NAME`/`LAT`/`LON`, `weather_bucket(code, is_day)`, `get_weather_bucket()` (Open-Meteo via urllib, cached 15 min, never raises). Card shows location + icon per bucket.
+- [x] `mqtt_client.py`: topics grouped as STATUS/SENSOR/EVENT, `start()`, `stop()`, `get_state()` (readings older than 30 s → None). Events saved via `db.add_event()`.
+- [x] `db.py`: `EVENT_INFO` (icon/title/desc per type), `init_db()`, `add_event()` (prunes to 20 + deletes JPEGs), `get_latest()`, `unread_count()`, `mark_all_read()`. Snapshot paths stored relative to `static/`.
+- [x] `app.py`: dashboard passes MQTT state ("---" when no reading), device states + error codes, unread count; `/notifications` route (get_latest, then mark_all_read); time filters `clock_time`/`short_date`/`iso_time`; runs with `debug=True, use_reloader=False` (restart by hand after .py changes).
+- [x] `notification.html` + `static/css/notifications.css`: icon | title + desc | snapshot | timestamp, NEW marker for unread.
+
+Next:
+1. [ ] Hardware test: `pip install paho-mqtt` on the Pi, ESPs publish status (retained, LWT), temp in °F, humidity, doorbell/motion events.
+2. [ ] Flask-SocketIO: live status lights, readings and bell count.
+3. [ ] Quote card (quotes.json) and company blurb.
+4. [ ] `camera.py`: capture thread, detection, snapshots, MJPEG live feed, camera status.
+5. [ ] Login (Flask-Login); replace the temp `username` in `app.py`'s context processor.
 
 Notes:
-- Templates live in `primetime/templates/` (Flask default). `primetime/pages/` is a leftover with an empty file and can be deleted.
 - `archive/` holds the old `app/` prototype.
+- Add `events.db` and `static/snaps/` to `.gitignore`.
 
 ## Overview
 Locally hosted smart doorbell web app (ESET 456 course project), proof-of-concept stage.
@@ -47,9 +57,10 @@ primetime/
 ├── mqtt_client.py   # paho client: subscribes to status/#, event/#, sensors/#; updates state, saves events, emits to browser
 ├── camera.py        # camera init, capture thread, human/cupcake detection, snapshots, publishes events, MJPEG frames
 ├── db.py            # SQLite helpers (events.db): add event, get latest 20, mark read, prune old rows + JPEGs
+├── weather.py       # Open-Meteo weather icon (location constants, cached fetch)
 ├── quotes.json      # quote bank for the quote generator
 ├── static/          # css, js, assets, snaps/
-└── templates/       # login.html, dashboard.html, notification.html
+└── templates/       # login.html, dashboard.html, notification.html, _header.html (shared)
 ```
 
 ## Pages / UI
