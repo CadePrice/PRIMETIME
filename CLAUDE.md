@@ -6,7 +6,9 @@
 - Go one step at a time. Wait for the user's code before moving on.
 
 ## Progress
-Current status: MQTT works end to end on the Pi (sensor ESP → Mosquitto → app). Round 2 hardware test in progress: sensor status-topic fix, live updates (Socket.IO), Pi forwarding cmd/ topics. Actuator sketch not written yet.
+Current status (2026-11-23): core system works on the Pi. Sensor + actuator ESPs, live dashboard (Socket.IO),
+live camera feed popup, event snapshots, and YOLO person/cake detection creating notifications are all tested
+on hardware. Next up: cupcake → EDP sound (step 1 below), then tuning, quotes/blurb, login.
 
 Done:
 - [x] Dashboard skeleton, shared header (`templates/_header.html`: logo → dashboard, bell → /notifications with unread badge, username menu with Sign out), device availability, weather card, live feed card. CSS in `static/css/dashboard.css`.
@@ -19,16 +21,39 @@ Done:
 - [x] Pi forwards events to the actuator: `EVENT_COMMANDS` in `mqtt_client.py` (motion → cmd/.../floodlight, doorbell → cmd/.../buzzer).
 - [x] Flask-SocketIO (`async_mode="threading"`): `mqtt_client.set_listener()` → `app.push_state()` emits `"state"` (built by `live_state()`) on every MQTT change, on connect, and every 5 s. `static/js/live.js` (both pages) updates status lights, error codes, live-feed state, readings and badge; the notifications page reloads on a new event. App runs via `socketio.run(...)`. Socket.IO JS client loads from CDN.
 
+- [x] Hardware test round 2 on the Pi: live updates and `cmd/#` forwarding work.
+- [x] Actuator ESP firmware (user wrote it): subscribes to `cmd/.../floodlight` + `cmd/.../buzzer`, LED + buzzer work.
+- [x] `camera.py` (Camera Module 3 **Wide**, imx708_wide, via picamera2): one capture thread owns the camera (1280x720 RGB888 = BGR, 15 fps); publishes `status/.../camera` retained (publishes "offline" first at startup to clear a stale retained "online", re-publishes every 30 s; no LWT); retries open every 5 s. JPEG-encodes only while live-feed viewers exist. `mjpeg_frames()` generator, `save_snapshot(event_type, frame=None)` → `"snaps/<ms>_<type>.jpg"` or None. `python camera.py` saves `camera_test.jpg` (no detection/MQTT; stop app.py first).
+- [x] Live feed: `/video_feed` MJPEG route in `app.py`; `<dialog id="feed-dialog">` popup in `dashboard.html` (styles in `dashboard.css`); `live.js` sets the img src on open, removes it on close/Esc/backdrop click (stops the stream), closes the popup if the camera goes offline.
+- [x] Event snapshots: `mqtt_client.set_snapshot_taker()` hook (registered in `app.py` with `camera.save_snapshot`; a hook because camera imports mqtt_client). `_save_event()` takes a snapshot when the payload has none (doorbell/motion from the ESP).
+- [x] `detector.py`: COCO-pretrained YOLO11n exported to ONNX on the PC (`yolo export model=yolo11n.pt format=onnx imgsz=320`), file at `models/yolo11n.onnx`, run with onnxruntime (no ultralytics/torch on the Pi). `detect(frame)` → `[Detection(label, confidence, box)]`, letterbox + per-class NMS, only `TARGET_CLASSES` {0: person, 55: cake}, `CONF_THRESHOLD` 0.45. `python detector.py [img]` = benchmark + `detector_test.jpg` with boxes. Measured on the Pi 4: ~117 ms/detection at 320. Tests: face 0.79, hand alone 0.64 (COCO counts it as person), printed paper cupcake detected, cupcake on a phone screen not detected.
+- [x] Detection thread in `camera.py`: ~3 checks/s (`DETECT_INTERVAL_S` 0.3); event when seen above `DETECT_EVENTS` threshold (person 0.60 → "human", cake 0.45 → "cupcake") in `CONFIRM_CHECKS` 3 in a row; once per visit (re-arms after `LEAVE_S` 10 s unseen) and `COOLDOWN_S` 30 s per type. Snapshot with box drawn (`DRAW_BOXES`), publishes JSON `{type, ts, snapshot, confidence}` to `event/.../human|cupcake`, which mqtt_client saves like any other event. Tested working on the Pi.
+
 Next:
-1. [ ] Hardware test round 2: reflash sensor ESP, `pip install flask-socketio simple-websocket` on the Pi, check live updates and `cmd/#` forwarding.
-2. [ ] Actuator ESP sketch: own `MQTT_CLIENTID` (different from the sensor's), `STATUS_TOPIC` `.../actuator`, its own secrets header, subscribe to `cmd/.../floodlight` + `cmd/.../buzzer` on every connect, callback notifies an LED/buzzer task (no delays in the callback). Remove the copied sensor tasks.
-3. [ ] Quote card (quotes.json) and company blurb.
-4. [ ] `camera.py`: capture thread, detection, snapshots, MJPEG live feed, camera status.
-5. [ ] Login (Flask-Login); replace the temp `username` in `app.py`'s context processor.
+1. [ ] Cupcake → EDP sound: add `"cupcake"` to `EVENT_COMMANDS` with a new `cmd/` topic (e.g. `cmd/house1/primetime1/sound`), actuator subscribes and plays it. Add the topic to the MQTT table.
+2. [ ] Detection tuning at the real door: person threshold (raise to ~0.7 if hands alone trigger), `CONFIRM_CHECKS`, `LEAVE_S`/`COOLDOWN_S`. If small/far cupcakes are missed, re-export at `imgsz=480` (~250 ms expected; just replace the .onnx, no code change). If live feed stutters, `detector.THREADS = 3`. Watch Pi temp (`vcgencmd measure_temp`).
+3. [ ] Optional: Camera Module 3 continuous autofocus in `_open_camera()` (AfMode continuous); boxes on the live feed.
+4. [ ] Quote card (quotes.json) and company blurb.
+5. [ ] Login (Flask-Login); replace the temp `username` in `app.py`'s context processor; Socket.IO connect handler has a TODO to reject unauthenticated clients; protect `/video_feed` too.
+6. [ ] Optional: `requirements.txt` + `SETUP.md` with the setup below.
 
 Notes:
 - `archive/` holds the old `app/` prototype.
-- Add `events.db` and `static/snaps/` to `.gitignore`.
+- `.gitignore` (repo root) has `events.db`, `static/snaps/`, `camera_test.jpg`, `detector_test.jpg`. `events.db` was committed before that: run `git rm --cached primetime/events.db` once.
+- `camera.py` and `detector.py` are app modules (imported by app.py / camera.py), not test scripts; their `__main__` blocks are the manual tests.
+- Ultralytics YOLO is AGPL-3.0 (fine for the course; matters only if distributed commercially).
+
+## Setup
+**Pi** (Raspberry Pi 4, no AI HAT; app at `~/Desktop/primetime`, venv `myenv`):
+- apt: `mosquitto mosquitto-clients python3-picamera2 python3-opencv` (picamera2/OpenCV/numpy must come from apt).
+- venv: `python3 -m venv --system-site-packages myenv` (so it sees the apt packages).
+- pip: `flask flask-socketio simple-websocket paho-mqtt onnxruntime` (onnxruntime 1.32.0 works with apt numpy 2.2.4). Never pip-install numpy, opencv-python, picamera2 or ultralytics into myenv (shadows the apt versions, breaks picamera2). Check: `python -c "import numpy; print(numpy.__file__)"` must be under `/usr/lib/python3/dist-packages`.
+- Model: copy `yolo11n.onnx` to `models/` (not in git).
+- Camera: only one process may open it (stop app.py before `python camera.py` / `rpicam-hello`). The `imx708_wide ... No static properties` libcamera warnings are harmless.
+
+**Windows dev PC**: `.venv` with `flask flask-socketio simple-websocket paho-mqtt`; camera and detection just stay disabled. Model export uses a separate venv (`yolo-export`, `pip install ultralytics onnx`).
+
+**ESP32 (Arduino IDE)**: esp32 board package; sensor: PubSubClient, Adafruit AHTX0 (+ BusIO, Unified Sensor); actuator: PubSubClient. Each ESP needs its own `MQTT_CLIENTID`.
 
 ## Overview
 Locally hosted smart doorbell web app (ESET 456 course project), proof-of-concept stage.
@@ -47,22 +72,24 @@ ESP32 (actuator)─┘                                    └── Pi camera + 
 - paho-mqtt (the app is an MQTT *client*; Mosquitto is the separate broker)
 - Flask-SocketIO for live updates to the browser (status lights, weather, bell count)
 - SQLite for notification events; snapshots saved as JPEGs in static/snaps/
-- OpenCV (+ picamera2 if needed) for human/cupcake detection
+- picamera2 for capture; YOLO11n (ONNX, onnxruntime) for human/cupcake detection; OpenCV for image work
 - MJPEG stream endpoint for the live camera feed
 - Jinja templates + plain JS + a light CSS framework (Pico.css or Bootstrap)
 - Open-Meteo (no API key) for the weather icon, cached every 10–15 min
-- Single Python process: Flask + MQTT thread + camera thread. Only ONE process may open the camera.
+- Single Python process: Flask + MQTT thread + camera capture thread + detection thread. Only ONE process may open the camera.
 
 ## Project structure
 ```
 primetime/
 ├── app.py           # Flask app: routes, login, Socket.IO, starts MQTT + camera threads
 ├── mqtt_client.py   # paho client: subscribes to status/#, event/#, sensors/#; updates state, saves events, emits to browser
-├── camera.py        # camera init, capture thread, human/cupcake detection, snapshots, publishes events, MJPEG frames
+├── camera.py        # capture thread, camera status, detection thread (events), snapshots, MJPEG frames
+├── detector.py      # YOLO11n ONNX inference: detect(frame) -> person/cake boxes (+ benchmark in __main__)
+├── models/          # yolo11n.onnx (copied to the Pi by hand, not in git)
 ├── db.py            # SQLite helpers (events.db): add event, get latest 20, mark read, prune old rows + JPEGs
 ├── weather.py       # Open-Meteo weather icon (location constants, cached fetch)
 ├── quotes.json      # quote bank for the quote generator
-├── static/          # css, js, assets, snaps/
+├── static/          # css/, js/live.js (Socket.IO updates + live feed popup), snaps/
 └── templates/       # login.html, dashboard.html, notification.html, _header.html (shared)
 ```
 
@@ -111,7 +138,7 @@ Command payload is "on"; commands are not retained.
 - Event payloads are small JSON, e.g. {"type":"human","ts":<unix>,"snapshot":"static/snaps/<ts>.jpg"}.
   Never send images over MQTT.
 - Do not retain event topics.
-- Camera detections are debounced with a cooldown (a few seconds) so one person ≠ many events.
+- Camera detections are debounced (N checks in a row, once per visit, per-type cooldown) so one person ≠ many events.
 - Camera events are published to the local broker even though camera.py is in the app, so the
   actuator ESP can react and all events flow through one handler.
 - Keep only the newest 20 events; delete pruned rows and their JPEGs.
